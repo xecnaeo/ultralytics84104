@@ -65,6 +65,7 @@ from ultralytics.nn.modules import (
     ResNetLayer,
     RTDETRDecoder,
     SCDown,
+    ScenePriorGuidedModule,
     Segment,
     Segment26,
     SemanticSegment,
@@ -75,6 +76,7 @@ from ultralytics.nn.modules import (
     YOLOESegment26,
     v10Detect,
 )
+from ultralytics.nn.modules.scene_prior_guided import clear_spgm_aux_cache, compute_spgm_aux_prior_loss
 from ultralytics.utils import (
     DEFAULT_CFG_DICT,
     LOGGER,
@@ -597,6 +599,31 @@ class DetectionModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
         return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+
+    def loss(self, batch, preds=None):
+        """Compute detection loss with SPGM auxiliary prior supervision."""
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+
+        clear_spgm_aux_cache()
+        if preds is None:
+            preds = self.forward(batch["img"])
+        loss, loss_items = self.criterion(preds, batch)
+
+        spgm_prior_loss, self.spgm_prior_info = compute_spgm_aux_prior_loss(
+            batch=batch,
+            lambda_prior=0.05,
+            scale_weights={"P3": 0.5, "P4": 1.0, "P5": 1.0},
+            mask_mode="binary",
+            center_ratio=0.7,
+            bce_weight=1.0,
+            dice_weight=1.0,
+        )
+        clear_spgm_aux_cache()
+        # Trainer sums this component vector; add the auxiliary term once while leaving logged detection items intact.
+        loss = loss.clone()
+        loss[0] = loss[0] + spgm_prior_loss * batch["img"].shape[0]
+        return loss, loss_items
 
 
 class OBBModel(DetectionModel):
@@ -2005,6 +2032,9 @@ def parse_model(d, ch, verbose=True):
                     args.extend((True, 1.2))
             if m is C2fCIB:
                 legacy = False
+        elif m is ScenePriorGuidedModule:
+            c2 = ch[f]
+            args = [ch[f], *args]
         elif m is AIFI:
             args = [ch[f], *args]
         elif m in frozenset({HGStem, HGBlock}):

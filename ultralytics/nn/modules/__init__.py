@@ -95,6 +95,7 @@ from .head import (
     YOLOESegment26,
     v10Detect,
 )
+from .scene_prior_guided import ScenePriorGuidedModule
 from .transformer import (
     AIFI,
     MLP,
@@ -178,6 +179,7 @@ __all__ = (
     "RepVGGDW",
     "ResNetLayer",
     "SCDown",
+    "ScenePriorGuidedModule",
     "Segment",
     "Segment26",
     "SemanticSegment",
