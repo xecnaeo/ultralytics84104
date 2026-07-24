@@ -12,11 +12,11 @@ MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26n-SPGM.yaml"
 DATA_YAML = Path("/home/liumengdong/xProjects/GP01/yolo26/dataset/pigData2025.yaml")
 OUTPUT_PROJECT = Path("/home/liumengdong/xProjects/GP02/yolo26/runs/train")
 
-EPOCHS = 30
+EPOCHS = 100
 BATCH = 16
 IMGSZ = 640
 DEVICE = "0"
-RUN_NAME = "yolo26n_spgm_stage6_aux_trend_4090_30e"
+RUN_NAME = "yolo26n_spgm_stage6_aux_trend_4090_100e"
 
 
 class SPGMPriorTrendLogger:
@@ -181,7 +181,7 @@ def main():
         project=str(OUTPUT_PROJECT),
         name=RUN_NAME,
         exist_ok=False,
-        save_period=10,
+        save_period=99,
         pretrained=False,
         amp=True,
         optimizer="AdamW",
