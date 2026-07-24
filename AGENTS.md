@@ -60,7 +60,24 @@ python -m pip --version
 - 未经明确请求不 push，不 force push，不执行 `git reset --hard`。
 - 不提交数据集、runs、权重、缓存、日志和临时文件。
 - 提交前检查 `git status --short --branch`、`git diff --check` 和完整 diff。
-- 当前远端 URL 为 `git@github.com:xecnaeo/ultralytics84104.git`；Server102_4090 尚未配置 GitHub 主机信任和仓库认证，未经用户确认不修改相关密钥或推送。
+- 当前远端 URL 为 `git@github.com:xecnaeo/ultralytics84104.git`，已配置仓库专用 Deploy Key；未经用户明确请求不推送。
+
+## tmux 运行约定
+
+- 所有训练脚本和训练相关测试，包括 smoke test，尽量在 tmux 会话中运行。
+- 会话名称按 `xt01`、`xt02`、`xt03`、`xt04` 递增，选择当前最小的未占用名称。
+- 同时存在的 tmux 会话不得超过 4 个；创建前必须先执行 `tmux list-sessions` 并统计数量。
+- 不复用仍存在的会话名称，不为腾出名额自动终止正在训练、测试、监控或来源不明的会话。
+- 命令使用绝对路径，并通过 `tee` 保存独立日志；训练结束后检查退出状态、日志、权重、results.csv 和 SPGM CSV。
+
+常用命令：
+
+```bash
+tmux list-sessions
+tmux new-session -d -s xt01 '<command>'
+tmux capture-pane -pt xt01 -S -100
+tmux attach-session -t xt01
+```
 
 ## 验证原则
 
