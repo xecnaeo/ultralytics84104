@@ -53,6 +53,20 @@ python -m pip --version
 5. SPGM 参数能够获得有限、非零梯度。
 6. 原始 YOLO26 配置仍能构建。
 
+## 多模型对比实验
+
+- 多模型迁移规范和新对话模板见 `docs/SPGM_MODEL_MIGRATION.md`。
+- 每个新模型使用独立分支 `feature/spgm-<model>` 和独立 worktree `/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-<model>`。
+- 新分支从已提交的 YOLO26-SPGM 参考提交创建；创建前先检查并处理参考 worktree 的未提交修改。
+- 不在正在执行正式训练的 worktree 中开发其他模型，不修改或停止已有训练任务。
+- 每次新对话只处理一个明确的目标 YAML；先比较目标模型特征流并形成计划，确认后再实施。
+- 保留官方原始 YAML，新增独立的 `<model>-SPGM.yaml` 和对应训练脚本。
+- 不照抄 YOLO26 的层号；根据目标模型真实的 P3/P4/P5 特征流更新所有 `from`、`Concat` 和检测头索引。
+- 首轮迁移保持 SPGM 核心实现、`lambda_prior=0.05`、BCE+Dice 和调制方式不变。
+- 基线与 SPGM 实验固定数据集、输入尺寸、seed、batch、优化器、学习率和增强参数。
+- P2/P6、分类、分割、姿态、OBB、YOLOE 或 RT-DETR 必须先检查监督尺度、标注格式、损失入口和特征拓扑，不默认直接复用三尺度方案。
+- smoke test 通过后才能申请正式长时训练；未经确认不 push。
+
 ## Git 约定
 
 - 日常开发只在 `feature/yolo26-spgm` worktree 中进行；`main` worktree 默认只读。
