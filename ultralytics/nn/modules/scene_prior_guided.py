@@ -90,36 +90,32 @@ def build_batch_weak_foreground_masks_torch(
     if mode not in ("binary", "center"):
         raise ValueError(f"快速验证阶段暂只支持 binary / center，但得到 mode={mode}")
 
+    valid = (batch_idx >= 0) & (batch_idx < batch_size)
+    batch_idx = batch_idx[valid]
+    bboxes = bboxes[valid]
+
     shrink = center_ratio if mode == "center" else 1.0
+    centers = bboxes[:, :2]
+    sizes = bboxes[:, 2:] * shrink
 
-    for i in range(bboxes.shape[0]):
-        b = int(batch_idx[i].item())
+    x1 = torch.floor((centers[:, 0] - sizes[:, 0] / 2.0) * out_w).long().clamp(0, out_w - 1)
+    y1 = torch.floor((centers[:, 1] - sizes[:, 1] / 2.0) * out_h).long().clamp(0, out_h - 1)
+    x2 = torch.ceil((centers[:, 0] + sizes[:, 0] / 2.0) * out_w).long().clamp(0, out_w)
+    y2 = torch.ceil((centers[:, 1] + sizes[:, 1] / 2.0) * out_h).long().clamp(0, out_h)
 
-        if b < 0 or b >= batch_size:
-            continue
+    # 保证至少占一个网格，与逐框切片赋值保持一致。
+    x2 = torch.where(x2 <= x1, (x1 + 1).clamp(max=out_w), x2)
+    y2 = torch.where(y2 <= y1, (y1 + 1).clamp(max=out_h), y2)
 
-        cx, cy, bw, bh = bboxes[i]
-
-        bw = bw * shrink
-        bh = bh * shrink
-
-        x1 = torch.floor((cx - bw / 2.0) * out_w).long().item()
-        y1 = torch.floor((cy - bh / 2.0) * out_h).long().item()
-        x2 = torch.ceil((cx + bw / 2.0) * out_w).long().item()
-        y2 = torch.ceil((cy + bh / 2.0) * out_h).long().item()
-
-        x1 = max(0, min(x1, out_w - 1))
-        y1 = max(0, min(y1, out_h - 1))
-        x2 = max(0, min(x2, out_w))
-        y2 = max(0, min(y2, out_h))
-
-        # 保证至少占一个网格
-        if x2 <= x1:
-            x2 = min(x1 + 1, out_w)
-        if y2 <= y1:
-            y2 = min(y1 + 1, out_h)
-
-        masks[b, 0, y1:y2, x1:x2] = 1.0
+    # 用二维差分图一次性合并同一图像内的所有矩形，避免逐框 .item() 触发 GPU-CPU 同步。
+    difference = torch.zeros((batch_size, out_h + 1, out_w + 1), device=device, dtype=torch.int32)
+    ones = torch.ones_like(batch_idx, dtype=difference.dtype)
+    difference.index_put_((batch_idx, y1, x1), ones, accumulate=True)
+    difference.index_put_((batch_idx, y2, x1), -ones, accumulate=True)
+    difference.index_put_((batch_idx, y1, x2), -ones, accumulate=True)
+    difference.index_put_((batch_idx, y2, x2), ones, accumulate=True)
+    covered = difference.cumsum(dim=1).cumsum(dim=2)[:, :out_h, :out_w] > 0
+    masks[:, 0] = covered.to(dtype=dtype)
 
     return masks
 

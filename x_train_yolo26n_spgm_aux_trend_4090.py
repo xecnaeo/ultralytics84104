@@ -57,13 +57,22 @@ class SPGMPriorTrendLogger:
         self.global_step = 0
         self.batch_csv = None
         self.overall_csv = None
+        self.batch_file = None
+        self.overall_file = None
+        self.batch_writer = None
+        self.overall_writer = None
         self.epoch_losses = defaultdict(list)
 
-    @staticmethod
-    def _append_rows(path, fieldnames, rows):
-        with path.open("a", newline="", encoding="utf-8") as file:
-            writer = csv.DictWriter(file, fieldnames=fieldnames)
-            writer.writerows(rows)
+    def _flush_csv(self):
+        for file in (self.batch_file, self.overall_file):
+            if file is not None and not file.closed:
+                file.flush()
+
+    def _close_csv(self):
+        self._flush_csv()
+        for file in (self.batch_file, self.overall_file):
+            if file is not None and not file.closed:
+                file.close()
 
     def on_train_start(self, trainer):
         save_dir = Path(trainer.save_dir) / "spgm_prior_trend"
@@ -71,12 +80,13 @@ class SPGMPriorTrendLogger:
         self.batch_csv = save_dir / "spgm_prior_batch.csv"
         self.overall_csv = save_dir / "spgm_prior_overall.csv"
 
-        for path, header in (
-            (self.batch_csv, self.batch_header),
-            (self.overall_csv, self.overall_header),
-        ):
-            with path.open("w", newline="", encoding="utf-8") as file:
-                csv.DictWriter(file, fieldnames=header).writeheader()
+        self.batch_file = self.batch_csv.open("w", newline="", encoding="utf-8", buffering=1024 * 1024)
+        self.overall_file = self.overall_csv.open("w", newline="", encoding="utf-8", buffering=1024 * 1024)
+        self.batch_writer = csv.DictWriter(self.batch_file, fieldnames=self.batch_header)
+        self.overall_writer = csv.DictWriter(self.overall_file, fieldnames=self.overall_header)
+        self.batch_writer.writeheader()
+        self.overall_writer.writeheader()
+        self._flush_csv()
 
         print("\n========== SPGM Prior Trend Logger (single GPU) ==========")
         print("batch csv:", self.batch_csv)
@@ -105,7 +115,7 @@ class SPGMPriorTrendLogger:
             "rank": -1,
             "world_size": 1,
         }
-        self._append_rows(self.overall_csv, self.overall_header, [common])
+        self.overall_writer.writerow(common)
 
         batch_rows = []
         for detail in info.get("detail", []):
@@ -123,7 +133,7 @@ class SPGMPriorTrendLogger:
                 }
             )
         if batch_rows:
-            self._append_rows(self.batch_csv, self.batch_header, batch_rows)
+            self.batch_writer.writerows(batch_rows)
 
         self.epoch_losses[epoch].append(common["loss_raw"])
         if self.global_step % 20 == 0:
@@ -135,7 +145,11 @@ class SPGMPriorTrendLogger:
             )
         self.global_step += 1
 
+    def on_train_epoch_end(self, trainer):
+        self._flush_csv()
+
     def on_train_end(self, trainer):
+        self._close_csv()
         if not self.epoch_losses:
             print("[SPGM Prior Trend] No prior information was recorded.")
             return
@@ -165,6 +179,7 @@ def main():
     trend_logger = SPGMPriorTrendLogger()
     model.add_callback("on_train_start", trend_logger.on_train_start)
     model.add_callback("on_train_batch_end", trend_logger.on_train_batch_end)
+    model.add_callback("on_train_epoch_end", trend_logger.on_train_epoch_end)
     model.add_callback("on_train_end", trend_logger.on_train_end)
 
     model.train(
