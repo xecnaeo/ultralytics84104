@@ -9,14 +9,27 @@ from ultralytics import YOLO
 
 SOURCE_ROOT = Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26")
 MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26n-SPGM.yaml"
+PRETRAINED_WEIGHTS = SOURCE_ROOT / "yolo26n.pt"
 DATA_YAML = Path("/home/liumengdong/xProjects/GP01/yolo26/dataset/pigData2025.yaml")
 OUTPUT_PROJECT = Path("/home/liumengdong/xProjects/GP02/yolo26/runs/train")
 
-EPOCHS = 100
+EPOCHS = 300
 BATCH = 16
 IMGSZ = 640
 DEVICE = "0"
-RUN_NAME = "yolo26n_spgm_stage6_aux_trend_4090_100e"
+RUN_NAME = "yolo26n_spgm_stage6_aux_trend_4090_300e_coco"
+
+COCO_LAYER_MAP = {
+    **{index: index for index in range(11)},
+    13: 15,
+    16: 19,
+    17: 20,
+    19: 22,
+    20: 23,
+    22: 25,
+    23: 26,
+}
+EXPECTED_PRETRAINED_ITEMS = 708
 
 
 class SPGMPriorTrendLogger:
@@ -164,7 +177,7 @@ class SPGMPriorTrendLogger:
 
 def validate_paths():
     """Fail early when a required model or dataset configuration is missing."""
-    for path in (MODEL_YAML, DATA_YAML):
+    for path in (MODEL_YAML, PRETRAINED_WEIGHTS, DATA_YAML):
         if not path.is_file():
             raise FileNotFoundError(path)
 
@@ -173,9 +186,39 @@ def validate_paths():
         raise FileExistsError(f"Run directory already exists; choose a new RUN_NAME: {run_dir}")
 
 
+def load_coco_pretrained_weights(model):
+    """Load official YOLO26n weights while accounting for SPGM layers inserted into the head."""
+    initial_state = {name: value.detach().clone() for name, value in model.model.state_dict().items()}
+    model.load(str(PRETRAINED_WEIGHTS))
+    source_model = model.ckpt.get("ema")
+    if source_model is None:
+        source_model = model.ckpt["model"]
+    source_state = source_model.float().state_dict()
+
+    model.model.load_state_dict(initial_state, strict=True)
+    target_state = model.model.state_dict()
+    remapped_state = {}
+    for source_name, value in source_state.items():
+        prefix, layer_text, suffix = source_name.split(".", 2)
+        target_layer = COCO_LAYER_MAP.get(int(layer_text))
+        if target_layer is None:
+            continue
+        target_name = f"{prefix}.{target_layer}.{suffix}"
+        if target_name in target_state and target_state[target_name].shape == value.shape:
+            remapped_state[target_name] = value
+
+    if len(remapped_state) != EXPECTED_PRETRAINED_ITEMS:
+        raise RuntimeError(
+            f"Expected {EXPECTED_PRETRAINED_ITEMS} compatible COCO state items, got {len(remapped_state)}"
+        )
+    model.model.load_state_dict(remapped_state, strict=False)
+    print(f"Remapped {len(remapped_state)}/{len(target_state)} state items from {PRETRAINED_WEIGHTS}")
+
+
 def main():
     validate_paths()
     model = YOLO(str(MODEL_YAML))
+    load_coco_pretrained_weights(model)
     trend_logger = SPGMPriorTrendLogger()
     model.add_callback("on_train_start", trend_logger.on_train_start)
     model.add_callback("on_train_batch_end", trend_logger.on_train_batch_end)
@@ -197,7 +240,6 @@ def main():
         name=RUN_NAME,
         exist_ok=False,
         save_period=99,
-        pretrained=False,
         amp=True,
         optimizer="AdamW",
         lr0=0.0004,
