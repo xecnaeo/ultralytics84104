@@ -8,19 +8,20 @@ from ultralytics import YOLO
 SOURCE_ROOT = Path("/home/liumengdong/xProjects/GP02/ultralytics84104-yolo26-baseline")
 MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26n.yaml"
 OFFICIAL_MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26.yaml"
+PRETRAINED_WEIGHTS = SOURCE_ROOT / "yolo26n.pt"
 DATA_YAML = Path("/home/liumengdong/xProjects/GP01/yolo26/dataset/pigData2025.yaml")
 OUTPUT_PROJECT = Path("/home/liumengdong/xProjects/GP02/yolo26/runs/train")
 
-EPOCHS = 100
+EPOCHS = 300
 BATCH = 16
 IMGSZ = 640
 DEVICE = "0"
-RUN_NAME = "yolo26n_baseline_4090_100e"
+RUN_NAME = "yolo26n_baseline_4090_300e_coco"
 
 
 def validate_paths():
     """Fail early when a required model, dataset, or output condition is invalid."""
-    for path in (OFFICIAL_MODEL_YAML, DATA_YAML):
+    for path in (OFFICIAL_MODEL_YAML, PRETRAINED_WEIGHTS, DATA_YAML):
         if not path.is_file():
             raise FileNotFoundError(path)
 
@@ -48,7 +49,7 @@ def main():
         name=RUN_NAME,
         exist_ok=False,
         save_period=99,
-        pretrained=False,
+        pretrained=str(PRETRAINED_WEIGHTS),
         amp=True,
         optimizer="AdamW",
         lr0=0.0004,
