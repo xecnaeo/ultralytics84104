@@ -38,8 +38,13 @@ python -m pip --version
 - SPGM 实现：`ultralytics/nn/modules/scene_prior_guided.py`。
 - 模块导出：`ultralytics/nn/modules/__init__.py`。
 - 模型解析和辅助损失：`ultralytics/nn/tasks.py`。
-- 模型配置：`ultralytics/cfg/models/26/yolo26n-SPGM.yaml`。
-- 默认输入尺寸：640。
+- 模型配置：
+  - `ultralytics/cfg/models/26/yolo26n-SPGM.yaml`。
+  - `ultralytics/cfg/models/26/yolo26s-SPGM.yaml`。
+- 当前训练入口：
+  - `x_train_yolo26n_spgm_aux_trend_4090.py`。
+  - `x_train_yolo26s_spgm_optimized_4090.py`。
+- 默认结构验证输入尺寸为 640；YOLO26s accuracy-oriented 对照训练使用 960。
 - P3/P4/P5 各包含一个 `ScenePriorGuidedModule`，对应 80x80、40x40、20x20。
 - 辅助监督采用 BCE + Dice prior loss，默认 `lambda_prior=0.05`，尺度权重为 P3/P4/P5 = 0.5/1.0/1.0。
 - `torch-dct` 只用于默认关闭的 legacy DCT 分支；不要为默认 SPGM 路径额外安装它。
