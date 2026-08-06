@@ -166,6 +166,28 @@ def bce_dice_prior_loss(
     }
 
 
+def _infer_pyramid_scale_name(logits, imgs, aux_name=None):
+    """Infer a pyramid level from input and feature strides, independent of image size."""
+    if aux_name is not None:
+        return str(aux_name)
+
+    feature_h, feature_w = logits.shape[-2:]
+    image_h, image_w = imgs.shape[-2:]
+    if image_h % feature_h != 0 or image_w % feature_w != 0:
+        raise ValueError(
+            f"Cannot infer SPGM scale: image={image_h}x{image_w}, feature={feature_h}x{feature_w}"
+        )
+
+    stride_h = image_h // feature_h
+    stride_w = image_w // feature_w
+    if stride_h != stride_w or stride_h <= 0 or stride_h & (stride_h - 1):
+        raise ValueError(
+            f"Expected an equal power-of-two SPGM stride, got {stride_h}x{stride_w} "
+            f"for image={image_h}x{image_w}, feature={feature_h}x{feature_w}"
+        )
+    return f"P{int(math.log2(stride_h))}"
+
+
 def compute_spgm_aux_prior_loss(
     batch,
     lambda_prior=0.05,
@@ -189,7 +211,7 @@ def compute_spgm_aux_prior_loss(
             batch['batch_idx'] [N]
             batch['bboxes']    [N,4], normalized xywh
         lambda_prior: 总 prior loss 权重。
-        scale_weights: dict，例如：
+        scale_weights: dict。尺度名根据输入图像与 prior logits 的步长动态推断，例如：
             {
                 "P3": 0.5,
                 "P4": 1.0,
@@ -250,17 +272,12 @@ def compute_spgm_aux_prior_loss(
             continue
 
         _, _, h, w = logits.shape
-
-        if h == 80 and w == 80:
-            scale_name = "P3"
-        elif h == 40 and w == 40:
-            scale_name = "P4"
-        elif h == 20 and w == 20:
-            scale_name = "P5"
-        else:
-            scale_name = f"{h}x{w}"
-
-        scale_weight = float(scale_weights.get(scale_name, 1.0))
+        scale_name = _infer_pyramid_scale_name(logits, imgs, item.get("aux_name"))
+        if scale_name not in scale_weights:
+            raise KeyError(
+                f"Missing SPGM scale weight for {scale_name}; configured scales={sorted(scale_weights)}"
+            )
+        scale_weight = float(scale_weights[scale_name])
 
         targets = build_batch_weak_foreground_masks_torch(
             batch_idx=batch_idx,
