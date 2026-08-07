@@ -89,6 +89,8 @@ def build_batch_weak_foreground_masks_torch(
 
     if mode not in ("binary", "center"):
         raise ValueError(f"快速验证阶段暂只支持 binary / center，但得到 mode={mode}")
+    if not 0.0 < float(center_ratio) <= 1.0:
+        raise ValueError(f"center_ratio must be in (0, 1], but got {center_ratio}")
 
     valid = (batch_idx >= 0) & (batch_idx < batch_size)
     batch_idx = batch_idx[valid]
@@ -318,6 +320,8 @@ def compute_spgm_aux_prior_loss(
         "enabled": True,
         "num_items": len(cache),
         "lambda_prior": lambda_prior,
+        "mask_mode": mask_mode,
+        "center_ratio": center_ratio,
         "loss_raw": float(loss_raw.detach()),
         "loss_weighted": float(weighted_loss.detach()),
         "detail": detail,

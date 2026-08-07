@@ -610,14 +610,15 @@ class DetectionModel(BaseModel):
             preds = self.forward(batch["img"])
         loss, loss_items = self.criterion(preds, batch)
 
+        spgm_aux_config = getattr(self, "spgm_aux_config", {})
         spgm_prior_loss, self.spgm_prior_info = compute_spgm_aux_prior_loss(
             batch=batch,
-            lambda_prior=0.05,
-            scale_weights={"P3": 0.5, "P4": 1.0, "P5": 1.0},
-            mask_mode="binary",
-            center_ratio=0.7,
-            bce_weight=1.0,
-            dice_weight=1.0,
+            lambda_prior=float(spgm_aux_config.get("lambda_prior", 0.05)),
+            scale_weights=spgm_aux_config.get("scale_weights", {"P3": 0.5, "P4": 1.0, "P5": 1.0}),
+            mask_mode=spgm_aux_config.get("mask_mode", "binary"),
+            center_ratio=float(spgm_aux_config.get("center_ratio", 1.0)),
+            bce_weight=float(spgm_aux_config.get("bce_weight", 1.0)),
+            dice_weight=float(spgm_aux_config.get("dice_weight", 1.0)),
         )
         clear_spgm_aux_cache()
         # Trainer sums this component vector; add the auxiliary term once while leaving logged detection items intact.

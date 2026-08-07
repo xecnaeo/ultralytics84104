@@ -1,7 +1,9 @@
 """Train accuracy-oriented YOLO26s-SPGM on Server102_4090 and record prior-loss trends."""
 
+import argparse
 import csv
 import hashlib
+import json
 import subprocess
 import sys
 from collections import defaultdict
@@ -22,6 +24,7 @@ MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26s-SPGM.yaml"
 OFFICIAL_MODEL_YAML = SOURCE_ROOT / "ultralytics/cfg/models/26/yolo26.yaml"
 PRETRAINED_WEIGHTS = Path("/home/liumengdong/xProjects/GP02/yolo26/weights/yolo26s.pt")
 DATA_YAML = Path("/home/liumengdong/xProjects/GP01/yolo26/dataset/pigData2025.yaml")
+DATASET_LABELS = Path("/home/liumengdong/xData/pigdata2025_all/labels")
 OUTPUT_PROJECT = Path("/home/liumengdong/xProjects/GP02/yolo26/runs/train")
 OFFICIAL_BASE_COMMIT = "d8f2cad2ca798701875c5ef91fd5a6a4189781ca"
 
@@ -31,7 +34,10 @@ NBS = BATCH
 IMGSZ = 960
 DEVICE = "0"
 LR0 = 0.01 * BATCH / 64
-RUN_NAME = "yolo26s_spgm_optimized_sgd_960_4090_300e"
+LAMBDA_PRIOR = 0.05
+SCALE_WEIGHTS = {"P3": 0.5, "P4": 1.0, "P5": 1.0}
+BCE_WEIGHT = 1.0
+DICE_WEIGHT = 1.0
 
 COCO_LAYER_MAP = {
     **{index: index for index in range(11)},
@@ -64,6 +70,8 @@ class SPGMPriorTrendLogger:
         "loss_raw",
         "loss_weighted",
         "lambda_prior",
+        "mask_mode",
+        "center_ratio",
         "num_items",
         "rank",
         "world_size",
@@ -75,6 +83,8 @@ class SPGMPriorTrendLogger:
         "loss_raw",
         "loss_weighted",
         "lambda_prior",
+        "mask_mode",
+        "center_ratio",
         "num_items",
         "rank",
         "world_size",
@@ -138,6 +148,8 @@ class SPGMPriorTrendLogger:
             "loss_raw": float(info.get("loss_raw", 0.0)),
             "loss_weighted": float(info.get("loss_weighted", 0.0)),
             "lambda_prior": float(info.get("lambda_prior", 0.0)),
+            "mask_mode": info.get("mask_mode", ""),
+            "center_ratio": float(info.get("center_ratio", 0.0)),
             "num_items": int(info.get("num_items", 0)),
             "rank": -1,
             "world_size": 1,
@@ -189,6 +201,20 @@ class SPGMPriorTrendLogger:
         print("==============================================\n")
 
 
+def parse_args():
+    """Parse the two weak-mask experiment controls and the required unique run name."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--mask-mode", choices=("binary", "center"), required=True)
+    parser.add_argument("--center-ratio", type=float, required=True)
+    parser.add_argument("--run-name", required=True)
+    args = parser.parse_args()
+    if not 0.0 < args.center_ratio <= 1.0:
+        parser.error("--center-ratio must be in (0, 1]")
+    if args.mask_mode == "binary" and args.center_ratio != 1.0:
+        parser.error("binary masks must use --center-ratio 1.0 for unambiguous provenance")
+    return args
+
+
 def sha256(path):
     """Return the SHA256 digest for a file."""
     digest = hashlib.sha256()
@@ -198,15 +224,83 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def sha256_tree(root, pattern="*.txt"):
+    """Hash relative paths and contents under a dataset-label directory."""
+    digest = hashlib.sha256()
+    paths = sorted(root.rglob(pattern))
+    if not paths:
+        raise FileNotFoundError(f"No {pattern} files found under {root}")
+    for path in paths:
+        digest.update(path.relative_to(root).as_posix().encode())
+        digest.update(b"\0")
+        with path.open("rb") as file:
+            for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                digest.update(chunk)
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def build_spgm_aux_config(args):
+    """Return the exact auxiliary-loss configuration applied to DetectionModel."""
+    return {
+        "lambda_prior": LAMBDA_PRIOR,
+        "scale_weights": SCALE_WEIGHTS.copy(),
+        "mask_mode": args.mask_mode,
+        "center_ratio": args.center_ratio,
+        "bce_weight": BCE_WEIGHT,
+        "dice_weight": DICE_WEIGHT,
+    }
+
+
+class SPGMExperimentConfigurator:
+    """Apply SPGM loss controls to the trainer model and persist experiment provenance."""
+
+    def __init__(self, args):
+        self.args = args
+        self.spgm_aux_config = build_spgm_aux_config(args)
+
+    def on_train_start(self, trainer):
+        trainer.model.spgm_aux_config = self.spgm_aux_config.copy()
+        record = {
+            "official_source_commit": OFFICIAL_BASE_COMMIT,
+            "spgm_source_commit": git_output("rev-parse", "HEAD"),
+            "model_yaml": str(MODEL_YAML),
+            "model_yaml_sha256": sha256(MODEL_YAML),
+            "pretrained_weights": str(PRETRAINED_WEIGHTS),
+            "pretrained_weights_sha256": sha256(PRETRAINED_WEIGHTS),
+            "data_yaml": str(DATA_YAML),
+            "data_yaml_sha256": sha256(DATA_YAML),
+            "dataset_label_sha256": {
+                split: sha256_tree(DATASET_LABELS / split) for split in ("train", "val", "test")
+            },
+            "spgm_aux_config": self.spgm_aux_config,
+            "training": {
+                "epochs": EPOCHS,
+                "batch": BATCH,
+                "nbs": NBS,
+                "imgsz": IMGSZ,
+                "device": DEVICE,
+                "lr0": LR0,
+                "seed": 0,
+                "deterministic": True,
+            },
+            "run_name": self.args.run_name,
+        }
+        record_path = Path(trainer.save_dir) / "spgm_experiment.json"
+        record_path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        print("SPGM auxiliary config:", self.spgm_aux_config)
+        print("SPGM experiment record:", record_path)
+
+
 def git_output(*args):
     """Run a read-only Git query in the YOLO26-SPGM worktree."""
     return subprocess.check_output(["git", "-C", str(SOURCE_ROOT), *args], text=True).strip()
 
 
-def validate_paths():
+def validate_paths(args):
     """Fail early when source integrity, required inputs, or output conditions are invalid."""
-    for path in (MODEL_YAML, OFFICIAL_MODEL_YAML, PRETRAINED_WEIGHTS, DATA_YAML):
-        if not path.is_file():
+    for path in (MODEL_YAML, OFFICIAL_MODEL_YAML, PRETRAINED_WEIGHTS, DATA_YAML, DATASET_LABELS):
+        if not path.exists():
             raise FileNotFoundError(path)
 
     imported_root = Path(ultralytics.__file__).resolve().parents[1]
@@ -217,12 +311,12 @@ def validate_paths():
     if git_output("status", "--porcelain", "--", "ultralytics"):
         raise RuntimeError("The SPGM ultralytics source tree has local changes.")
 
-    run_dir = OUTPUT_PROJECT / RUN_NAME
+    run_dir = OUTPUT_PROJECT / args.run_name
     if run_dir.exists():
-        raise FileExistsError(f"Run directory already exists; choose a new RUN_NAME: {run_dir}")
+        raise FileExistsError(f"Run directory already exists; choose a new --run-name: {run_dir}")
 
 
-def print_provenance():
+def print_provenance(args):
     """Print source, model, pretrained-weight, and runtime provenance into the training log."""
     print("\n========== Optimized YOLO26s-SPGM Provenance ==========")
     print("official source commit:", OFFICIAL_BASE_COMMIT)
@@ -233,6 +327,10 @@ def print_provenance():
     print("official model yaml sha256:", sha256(OFFICIAL_MODEL_YAML))
     print("COCO pretrained weights:", PRETRAINED_WEIGHTS)
     print("COCO pretrained weights sha256:", sha256(PRETRAINED_WEIGHTS))
+    print("data yaml:", DATA_YAML)
+    print("data yaml sha256:", sha256(DATA_YAML))
+    print("SPGM auxiliary config:", build_spgm_aux_config(args))
+    print("run name:", args.run_name)
     print("python:", sys.version.replace("\n", " "))
     print("torch:", torch.__version__)
     print("torch cuda:", torch.version.cuda)
@@ -300,13 +398,17 @@ def load_coco_pretrained_weights(model):
 
 def main():
     """Fine-tune COCO-pretrained YOLO26s-SPGM with baseline-matched optimized settings."""
-    validate_paths()
-    print_provenance()
+    args = parse_args()
+    validate_paths(args)
+    print_provenance(args)
     model = YOLO(str(MODEL_YAML))
     validate_model(model)
     load_coco_pretrained_weights(model)
+    model.model.spgm_aux_config = build_spgm_aux_config(args)
 
+    experiment_configurator = SPGMExperimentConfigurator(args)
     trend_logger = SPGMPriorTrendLogger()
+    model.add_callback("on_train_start", experiment_configurator.on_train_start)
     model.add_callback("on_train_start", trend_logger.on_train_start)
     model.add_callback("on_train_batch_end", trend_logger.on_train_batch_end)
     model.add_callback("on_train_epoch_end", trend_logger.on_train_epoch_end)
@@ -325,7 +427,7 @@ def main():
         device=DEVICE,
         workers=8,
         project=str(OUTPUT_PROJECT),
-        name=RUN_NAME,
+        name=args.run_name,
         exist_ok=False,
         pretrained=True,
         resume=False,
