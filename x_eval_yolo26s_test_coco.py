@@ -29,6 +29,26 @@ VARIANTS = {
         "run_name": "yolo26s_spgm_optimized_sgd_960_4090_300e_test_cocoeval",
         "spgm_modules": 3,
     },
+    "spgm-center-scalefix": {
+        "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
+        "weights": Path(
+            "/home/liumengdong/xProjects/GP02/yolo26/runs/train/"
+            "yolo26s_spgm_center_r0p7_sgd_960_4090_300e_seed0_scalefix/weights/best.pt"
+        ),
+        "weights_sha256": "1f589e7d5482869af947329dc0e7b7a2cdea3eca6162e37af9dd78c401f9f638",
+        "run_name": "yolo26s_spgm_center_r0p7_sgd_960_4090_300e_seed0_scalefix_test_cocoeval",
+        "spgm_modules": 3,
+    },
+    "spgm-binary-scalefix": {
+        "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
+        "weights": Path(
+            "/home/liumengdong/xProjects/GP02/yolo26/runs/train/"
+            "yolo26s_spgm_binary_r1p0_sgd_960_4090_300e_seed0_scalefix/weights/best.pt"
+        ),
+        "weights_sha256": "ff3420ca8cbea3452c57b90be5cbcb3f35c1cb0017d66f298fb08c524da6fb4b",
+        "run_name": "yolo26s_spgm_binary_r1p0_sgd_960_4090_300e_seed0_scalefix_test_cocoeval",
+        "spgm_modules": 3,
+    },
 }
 
 
