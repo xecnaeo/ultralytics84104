@@ -621,6 +621,8 @@ class ScenePriorGuidedModule(nn.Module):
         # one_mask     : prior mask 全 1，测试全局均匀增强
         # ------------------------------------------------------------
         self.runtime_mode = "normal"
+        # normal : 使用显式 x/y 坐标；zero : 保留通道与参数量但移除坐标信息。
+        self.coordinate_mode = "normal"
         self.collect_feature_stats = True
         self.feature_delta_stats = self._empty_feature_stats()
 
@@ -796,6 +798,13 @@ class ScenePriorGuidedModule(nn.Module):
         if mode not in valid_modes:
             raise ValueError(f"Unsupported SPGM runtime mode: {mode}, valid={valid_modes}")
         self.runtime_mode = mode
+
+    def set_coordinate_mode(self, mode="normal"):
+        """设置显式坐标编码模式，同时保持先验头结构和参数量不变。"""
+        valid_modes = ["normal", "zero"]
+        if mode not in valid_modes:
+            raise ValueError(f"Unsupported SPGM coordinate mode: {mode}, valid={valid_modes}")
+        self.coordinate_mode = mode
 
     def reset_feature_stats(self):
         """重置 SPGM 特征扰动统计。"""
@@ -990,6 +999,8 @@ class ScenePriorGuidedModule(nn.Module):
         coord = None
         if self.use_coord and self.coord_encoder is not None:
             coord = self.coord_encoder(x)
+            if getattr(self, "coordinate_mode", "normal") == "zero":
+                coord = torch.zeros_like(coord)
 
             # 这里只缓存 detach 后的坐标图，避免 deepcopy 和显存问题。
             self.coord_map = coord.detach()

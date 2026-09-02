@@ -91,6 +91,44 @@ class SPGMMaskTest(unittest.TestCase):
                 logits = torch.empty((1, 1, *feature_hw))
                 self.assertEqual(_infer_pyramid_scale_name(logits, images), expected)
 
+    def test_coordinate_modes_preserve_shape_parameters_and_legacy_default(self):
+        module = ScenePriorGuidedModule(32).eval()
+        x = torch.rand((2, 32, 12, 16))
+        parameter_count = sum(parameter.numel() for parameter in module.parameters())
+
+        normal_output = module(x)
+        self.assertEqual(tuple(normal_output.shape), tuple(x.shape))
+        self.assertAlmostEqual(float(module.coord_map.min()), -1.0)
+        self.assertAlmostEqual(float(module.coord_map.max()), 1.0)
+
+        module.set_coordinate_mode("zero")
+        zero_output = module(x)
+        self.assertEqual(tuple(zero_output.shape), tuple(x.shape))
+        self.assertTrue(torch.isfinite(zero_output).all())
+        self.assertEqual(torch.count_nonzero(module.coord_map).item(), 0)
+        self.assertEqual(sum(parameter.numel() for parameter in module.parameters()), parameter_count)
+
+        with self.assertRaisesRegex(ValueError, "coordinate mode"):
+            module.set_coordinate_mode("invalid")
+
+        del module.coordinate_mode
+        legacy_output = module(x)
+        self.assertTrue(torch.isfinite(legacy_output).all())
+        self.assertGreater(torch.count_nonzero(module.coord_map).item(), 0)
+
+    def test_zero_coordinate_mode_keeps_visual_feature_gradients(self):
+        module = ScenePriorGuidedModule(16).train()
+        module.set_coordinate_mode("zero")
+        x = torch.rand((2, 16, 8, 8), requires_grad=True)
+        output = module(x)
+        output.square().mean().backward()
+
+        projection_grad = module.prior_head.proj[0].weight.grad
+        self.assertIsNotNone(projection_grad)
+        self.assertTrue(torch.isfinite(projection_grad).all())
+        self.assertGreater(projection_grad[:, :16].abs().sum(), 0)
+        self.assertEqual(projection_grad[:, 16:].abs().sum().item(), 0)
+
     @unittest.skipUnless(torch.cuda.is_available(), "CUDA integration smoke test")
     def test_yolo26s_spgm_structure_aux_loss_and_gradients(self):
         spgm_yaml = "ultralytics/cfg/models/26/yolo26s-SPGM.yaml"
@@ -107,6 +145,8 @@ class SPGMMaskTest(unittest.TestCase):
         }
         spgm_modules = [module for module in model.modules() if isinstance(module, ScenePriorGuidedModule)]
         self.assertEqual(len(spgm_modules), 3)
+        for module in spgm_modules:
+            module.set_coordinate_mode("zero")
 
         batch = {
             "img": torch.rand((2, 3, 640, 640), device="cuda"),
@@ -126,6 +166,7 @@ class SPGMMaskTest(unittest.TestCase):
         self.assertEqual(model.spgm_prior_info["mask_mode"], "center")
         self.assertEqual(model.spgm_prior_info["center_ratio"], 0.7)
         for module in spgm_modules:
+            self.assertEqual(torch.count_nonzero(module.coord_map).item(), 0)
             gradients = [parameter.grad for parameter in module.prior_head.parameters()]
             self.assertTrue(all(gradient is not None for gradient in gradients))
             self.assertTrue(all(torch.isfinite(gradient).all() for gradient in gradients))
