@@ -202,16 +202,22 @@ class SPGMPriorTrendLogger:
 
 
 def parse_args():
-    """Parse the two weak-mask experiment controls and the required unique run name."""
+    """Parse weak-mask, auxiliary-loss, and run-provenance controls."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mask-mode", choices=("binary", "center"), required=True)
     parser.add_argument("--center-ratio", type=float, required=True)
+    parser.add_argument("--lambda-prior", type=float, default=LAMBDA_PRIOR)
+    parser.add_argument("--modulation-mode", choices=("on", "off"), default="on")
+    parser.add_argument("--mosaic-mode", choices=("standard", "off"), default="standard")
+    parser.add_argument("--coordinate-mode", choices=("on", "zero"), default="on")
     parser.add_argument("--run-name", required=True)
     args = parser.parse_args()
     if not 0.0 < args.center_ratio <= 1.0:
         parser.error("--center-ratio must be in (0, 1]")
     if args.mask_mode == "binary" and args.center_ratio != 1.0:
         parser.error("binary masks must use --center-ratio 1.0 for unambiguous provenance")
+    if args.lambda_prior < 0.0:
+        parser.error("--lambda-prior must be non-negative")
     return args
 
 
@@ -243,13 +249,46 @@ def sha256_tree(root, pattern="*.txt"):
 def build_spgm_aux_config(args):
     """Return the exact auxiliary-loss configuration applied to DetectionModel."""
     return {
-        "lambda_prior": LAMBDA_PRIOR,
+        "lambda_prior": args.lambda_prior,
         "scale_weights": SCALE_WEIGHTS.copy(),
         "mask_mode": args.mask_mode,
         "center_ratio": args.center_ratio,
         "bce_weight": BCE_WEIGHT,
         "dice_weight": DICE_WEIGHT,
     }
+
+
+def build_mosaic_config(args):
+    """Return the exact Mosaic schedule passed to Ultralytics."""
+    if args.mosaic_mode == "standard":
+        return {"mode": "standard", "mosaic": 1.0, "close_mosaic": 20}
+    return {"mode": "off", "mosaic": 0.0, "close_mosaic": 0}
+
+
+def configure_spgm_runtime_mode(model, modulation_mode):
+    """Enable normal SPGM modulation or keep only the auxiliary prior branch."""
+    runtime_mode = "normal" if modulation_mode == "on" else "identity"
+    spgm_modules = [
+        module for module in model.modules() if module.__class__.__name__ == "ScenePriorGuidedModule"
+    ]
+    if len(spgm_modules) != 3:
+        raise RuntimeError(f"Expected 3 ScenePriorGuidedModule instances, got {len(spgm_modules)}")
+    for module in spgm_modules:
+        module.set_runtime_mode(runtime_mode)
+    return runtime_mode
+
+
+def configure_spgm_coordinate_mode(model, coordinate_mode):
+    """Use normal coordinates or zero them while preserving SPGM capacity."""
+    runtime_mode = "normal" if coordinate_mode == "on" else "zero"
+    spgm_modules = [
+        module for module in model.modules() if module.__class__.__name__ == "ScenePriorGuidedModule"
+    ]
+    if len(spgm_modules) != 3:
+        raise RuntimeError(f"Expected 3 ScenePriorGuidedModule instances, got {len(spgm_modules)}")
+    for module in spgm_modules:
+        module.set_coordinate_mode(runtime_mode)
+    return runtime_mode
 
 
 class SPGMExperimentConfigurator:
@@ -261,6 +300,11 @@ class SPGMExperimentConfigurator:
 
     def on_train_start(self, trainer):
         trainer.model.spgm_aux_config = self.spgm_aux_config.copy()
+        runtime_mode = configure_spgm_runtime_mode(trainer.model, self.args.modulation_mode)
+        coordinate_runtime_mode = configure_spgm_coordinate_mode(
+            trainer.model, self.args.coordinate_mode
+        )
+        mosaic_config = build_mosaic_config(self.args)
         record = {
             "official_source_commit": OFFICIAL_BASE_COMMIT,
             "spgm_source_commit": git_output("rev-parse", "HEAD"),
@@ -274,6 +318,10 @@ class SPGMExperimentConfigurator:
                 split: sha256_tree(DATASET_LABELS / split) for split in ("train", "val", "test")
             },
             "spgm_aux_config": self.spgm_aux_config,
+            "modulation_mode": self.args.modulation_mode,
+            "spgm_runtime_mode": runtime_mode,
+            "coordinate_mode": self.args.coordinate_mode,
+            "spgm_coordinate_mode": coordinate_runtime_mode,
             "training": {
                 "epochs": EPOCHS,
                 "batch": BATCH,
@@ -283,6 +331,9 @@ class SPGMExperimentConfigurator:
                 "lr0": LR0,
                 "seed": 0,
                 "deterministic": True,
+                "mosaic_mode": mosaic_config["mode"],
+                "mosaic": mosaic_config["mosaic"],
+                "close_mosaic": mosaic_config["close_mosaic"],
             },
             "run_name": self.args.run_name,
         }
@@ -330,6 +381,9 @@ def print_provenance(args):
     print("data yaml:", DATA_YAML)
     print("data yaml sha256:", sha256(DATA_YAML))
     print("SPGM auxiliary config:", build_spgm_aux_config(args))
+    print("SPGM modulation mode:", args.modulation_mode)
+    print("SPGM coordinate mode:", args.coordinate_mode)
+    print("Mosaic config:", build_mosaic_config(args))
     print("run name:", args.run_name)
     print("python:", sys.version.replace("\n", " "))
     print("torch:", torch.__version__)
@@ -405,6 +459,9 @@ def main():
     validate_model(model)
     load_coco_pretrained_weights(model)
     model.model.spgm_aux_config = build_spgm_aux_config(args)
+    configure_spgm_runtime_mode(model.model, args.modulation_mode)
+    configure_spgm_coordinate_mode(model.model, args.coordinate_mode)
+    mosaic_config = build_mosaic_config(args)
 
     experiment_configurator = SPGMExperimentConfigurator(args)
     trend_logger = SPGMPriorTrendLogger()
@@ -454,11 +511,11 @@ def main():
         perspective=0.0,
         flipud=0.0,
         fliplr=0.5,
-        mosaic=1.0,
+        mosaic=mosaic_config["mosaic"],
         mixup=0.0,
         cutmix=0.0,
         copy_paste=0.0,
-        close_mosaic=20,
+        close_mosaic=mosaic_config["close_mosaic"],
         rect=False,
         multi_scale=0.0,
         val=True,

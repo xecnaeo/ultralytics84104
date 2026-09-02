@@ -39,6 +39,19 @@ VARIANTS = {
         "run_name": "yolo26s_spgm_center_r0p7_sgd_960_4090_300e_seed0_scalefix_test_cocoeval",
         "spgm_modules": 3,
     },
+    "spgm-center-scalefix-mosaic-off": {
+        "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
+        "weights": Path(
+            "/home/liumengdong/xProjects/GP02/yolo26/runs/train/"
+            "yolo26s_spgm_center_r0p7_sgd_960_4090_300e_seed0_scalefix_mosaic_off/weights/best.pt"
+        ),
+        "weights_sha256": "ef36033934c5bdcfe0849cc10e401d9aaba8a8c317ef37e27ccd3a9e79b8f5df",
+        "run_name": (
+            "yolo26s_spgm_center_r0p7_sgd_960_4090_300e_seed0_"
+            "scalefix_mosaic_off_test_cocoeval"
+        ),
+        "spgm_modules": 3,
+    },
     "spgm-binary-scalefix": {
         "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
         "weights": Path(
@@ -47,6 +60,26 @@ VARIANTS = {
         ),
         "weights_sha256": "ff3420ca8cbea3452c57b90be5cbcb3f35c1cb0017d66f298fb08c524da6fb4b",
         "run_name": "yolo26s_spgm_binary_r1p0_sgd_960_4090_300e_seed0_scalefix_test_cocoeval",
+        "spgm_modules": 3,
+    },
+    "spgm-modulation-only-center": {
+        "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
+        "weights": Path(
+            "/home/liumengdong/xProjects/GP02/yolo26/runs/train/"
+            "yolo26s_spgm_modulation_only_center_r0p7_sgd_960_4090_300e_seed0/weights/best.pt"
+        ),
+        "weights_sha256": "bbbb641d31cafae211ce7066d7fd77b2f261f4633ba3c7d945d867694118b0bc",
+        "run_name": "yolo26s_spgm_modulation_only_center_r0p7_sgd_960_4090_300e_seed0_test_cocoeval",
+        "spgm_modules": 3,
+    },
+    "spgm-aux-only-center": {
+        "source_root": Path("/home/liumengdong/xProjects/GP02/ultralytics84104-spgm-yolo26"),
+        "weights": Path(
+            "/home/liumengdong/xProjects/GP02/yolo26/runs/train/"
+            "yolo26s_spgm_aux_only_center_r0p7_sgd_960_4090_300e_seed0/weights/best.pt"
+        ),
+        "weights_sha256": "4b392302d04d1bb0aa2b0373386fe1161db1019a37e0e089148f7f5ae0cc5ae7",
+        "run_name": "yolo26s_spgm_aux_only_center_r0p7_sgd_960_4090_300e_seed0_test_cocoeval",
         "spgm_modules": 3,
     },
 }
